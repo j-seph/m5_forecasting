@@ -1,4 +1,6 @@
 library(data.table)
+library(lubridate)
+library(pryr) # for memory usage
 
 TARGET = 'sales'
 END_TRAIN  = 1913
@@ -53,8 +55,52 @@ prices_df = calendar_prices[prices_df, on='wm_yr_wk']
 
 rm(calendar_prices)
 
+# prices fe
 prices_df[, price_momentum := sell_price / shift(sell_price), by = .(store_id, item_id)]
 prices_df[, price_momentum_month := sell_price / mean(sell_price), by = .(store_id, item_id, month)]
 prices_df[, price_momentum_year := sell_price / mean(sell_price), by = .(store_id, item_id, year)]
 prices_df[, `:=` (month = NULL, year = NULL)]
 
+
+# merge prices
+original_columns = names(grid_df)
+grid_df = prices_df[grid_df, on=c('store_id', 'item_id', 'wm_yr_wk')]
+keep_columns = names(grid_df)[!names(grid_df) %in% original_columns]
+grid_df = grid_df[, c(MAIN_INDEX, keep_columns), with = FALSE]
+fwrite(grid_df, 'checkpoint/grid_pt2.csv')
+rm(prices_df)
+
+grid_df = fread('checkpoint/grid_pt1.csv')
+
+grid_df = grid_df[, MAIN_INDEX, with = FALSE]
+icols = c('date', 'd', 'event_name_1', 'event_type_2', 'event_name_2', 'event_type_2',
+          'snap_CA', 'snap_TX', 'snap_WI')
+grid_df = calendar_df[, icols, with = FALSE][grid_df, on='d']
+
+# date features
+grid_df[, date := as.IDate(date)]
+grid_df[, `:=` (tm_d = mday(date),
+                tm_w = week(date),
+                tm_m = month(date),
+                tm_y = year(date))]
+grid_df[, tm_y := tm_y - min(tm_y)]
+grid_df[, tm_wm := ceiling(tm_d/7)]
+grid_df[, tm_dow := wday(date)]
+grid_df[, tm_weekend := ifelse(tm_dow >= 5, 1, 0)]
+grid_df[, date := NULL]
+
+fwrite(grid_df, 'checkpoint/grid_pt3.csv')
+rm(calendar_df, grid_df)
+
+## additional cleaning
+grid_df = fread('checkpoint/grid_pt1.csv')
+grid_df[, d := as.numeric(gsub('d_', '', d))]
+grid_df[, wm_yr_wk := NULL]
+fwrite(grid_df, 'checkpoint/grid_pt1.csv')
+
+grid_df2 = fread('checkpoint/grid_pt2.csv')
+grid_df3 = fread('checkpoint/grid_pt3.csv')
+
+grid = cbind(grid_df, grid_df2, grid_df3)
+
+fwrite(grid, 'checkpoint/full_grid.csv')
