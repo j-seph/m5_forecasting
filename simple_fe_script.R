@@ -15,7 +15,7 @@ grid_df = melt.data.table(train_df, id.vars = index_columns, variable.name = 'd'
 
 # test grid
 add_grid = data.table()
-for (i in 1:29) {
+for (i in 1:28) {
     temp_df = unique(train_df[, ..index_columns])
     temp_df[, d := paste0('d_', END_TRAIN + i)]
     temp_df[, sales := NA]

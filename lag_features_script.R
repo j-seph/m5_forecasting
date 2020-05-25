@@ -13,7 +13,7 @@ train_df = melt.data.table(train_df, id.vars = index_columns, variable.name = 'd
 temp_df = train_df[, .(id, d, sales)]
 
 system.time({
-    for (i in 1:8) {
+    for (i in 1:7) {
         print(paste('Shifting:', i))
         temp_df[, paste0('lag_', i) := shift(sales, 1), by = id]
     }
@@ -42,7 +42,7 @@ SHIFT_DAY = 28
 
 # create lags
 system.time({
-    LAG_DAYS = SHIFT_DAY:(SHIFT_DAY + 7)
+    LAG_DAYS = SHIFT_DAY:(SHIFT_DAY + 6)
     
     for (i in LAG_DAYS) {
         grid_df[, paste0('sales_lag_', i) := shift(sales, i), by = id]
@@ -53,9 +53,9 @@ system.time({
 system.time({
     for (i in c(14, 30, 60, 180)) {
         print(paste('Rolling period:', i))
-        grid_df[, paste0('rolling_max_', i) := frollapply(shift(sales, SHIFT_DAY), i, max)]
-        grid_df[, paste0('rolling_mean_', i) := frollapply(shift(sales, SHIFT_DAY), i, mean)]
-        grid_df[, paste0('rolling_std_', i) := frollapply(shift(sales, SHIFT_DAY), i, sd)]
+        grid_df[, paste0('rolling_max_', i) := frollapply(shift(sales, SHIFT_DAY), i, max, na.rm=TRUE)]
+        grid_df[, paste0('rolling_mean_', i) := frollapply(shift(sales, SHIFT_DAY), i, mean, na.rm=TRUE)]
+        grid_df[, paste0('rolling_std_', i) := frollapply(shift(sales, SHIFT_DAY), i, sd, na.rm=TRUE)]
     }
 })
 

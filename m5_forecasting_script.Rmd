@@ -1,0 +1,274 @@
+---
+title: "m5_forecasting_mkdwn"
+author: "Joseph Kang"
+date: "5/23/2020"
+output: html_document
+---
+
+```{r libraries}
+library(data.table)
+library(ggplot2)
+library(zoo)
+library(xgboost)
+```
+
+
+```{r load data}
+calendar_raw = fread('/home/prometheus/workspace/kaggle/m5_forecasting/input/calendar.csv')
+train_raw = fread('/home/prometheus/workspace/kaggle/m5_forecasting/input/sales_train_validation.csv')
+price_raw = fread('/home/prometheus/workspace/kaggle/m5_forecasting/input/sell_prices.csv')
+```
+
+```{r merge datasets}
+train_m = melt.data.table(train_raw, id.vars = c('id','item_id', 'dept_id', 'cat_id', 'store_id', 'state_id'), variable.name = 'd', value.name = 'sales')
+train_1 = calendar_raw[train_m, on=c('d')]
+train_2 = price_raw[train_1, on=c('store_id', 'item_id', 'wm_yr_wk')]
+
+rm(calendar_raw, train_raw, price_raw, train_m, train_1)
+gc()
+
+data = copy(train_2)
+# fwrite(data, '/home/prometheus/workspace/kaggle/m5_forecasting/input/raw_data.csv')
+
+rm(train_2)
+gc()
+```
+
+
+```{r eda missing prices}
+data[, date_ := as.IDate(date)]
+data[, date := date_]
+data[, date_ := NULL]
+
+# data[, uniqueN(sell_price), .(store_id, item_id, wm_yr_wk)][V1 > 1] # 1 unique price per item/store/week
+
+# # METHOD 1: impute average price by item/store
+# data[, sell_price_ := replace(sell_price, is.na(sell_price), mean(sell_price, na.rm=TRUE)), .(store_id, item_id)]
+```
+
+```{r missing events}
+data[event_name_1 == '', event_name_1 := NA]
+data[event_type_1 == '', event_type_1 := NA]
+
+data[event_name_2 == '', event_name_2 := NA]
+data[event_type_2 == '', event_type_2 := NA]
+```
+
+```{r save partitions}
+fwrite(data[state_id == 'CA'], '/home/prometheus/workspace/kaggle/m5_forecasting/input/train_CA.csv')
+fwrite(data[state_id == 'TX'], '/home/prometheus/workspace/kaggle/m5_forecasting/input/train_TX.csv')
+fwrite(data[state_id == 'WI'], '/home/prometheus/workspace/kaggle/m5_forecasting/input/train_WI.csv')
+```
+
+```{r clean workspace}
+rm(list=ls())
+gc()
+```
+
+
+```{r read in partitions}
+
+data = fread('/home/prometheus/workspace/kaggle/m5_forecasting/input/train_CA.csv')
+data[, date_ := as.IDate(date)]
+data[, date := date_]
+data[, date_ := NULL]
+```
+
+```{r helper functions}
+free = function() invisible(gc())
+```
+
+```{r feature engineering - time features}
+data[, weekend := ifelse(weekday %chin% c('Friday', 'Saturday', 'Sunday'), 1, 0)]
+data[, season := dplyr::case_when(month %in% c(1,2,12) ~ 1,
+                                  month %in% c(3,4,5) ~ 2,
+                                  month %in% c(6,7,8) ~ 3,
+                                  month %in% c(9,10,11) ~ 4)]
+```
+
+```{r feature engineering - lag features}
+
+data = data[order(store_id, item_id, date)]
+
+lapply(c(1,7,30,365), function(x) {
+    data[, paste0('lag_', x, '_sales') := shift(sales, x), .(item_id, store_id)]
+})
+
+lapply(c(7, 14, 30), function(x) {
+    data[, paste0('roll_mean_', x, '_sales') := frollmean(sales, x), .(item_id, store_id)]
+})
+
+
+
+```
+
+
+```{r categorical variables encoding}
+# data[, store_id_ := as.numeric(as.factor(store_id))]
+# data[, item_id_ := as.numeric(as.factor(item_id))]
+data[, year_ := as.numeric(as.factor(year))]
+# data[, dept_id_ := as.numeric(as.factor(dept_id))]
+# data[, cat_id_ := as.numeric(as.factor(cat_id))]
+```
+
+```{r training subset}
+features = c(#'store_id_', 'item_id_', 'dept_id_', 'cat_id_', 
+             'year_', 'month', 'wday', 'weekend', 'season',
+             'snap_CA', 'snap_TX', 'snap_WI', 
+             'sales', 'sell_price',
+             'lag_1_sales', 'lag_7_sales', 'lag_30_sales', 'lag_365_sales',
+             'roll_mean_7_sales', 'roll_mean_14_sales', 'roll_mean_30_sales')
+
+train_data = data[date < '2016-03-28', ..features]
+valid_data = data[date >= '2016-03-28', ..features]
+
+rm(data)
+free()
+```
+
+```{r train xgboost model}
+train_matrix = data.matrix(train_data[, -'sales'])
+train_label = train_data[, sales]
+
+valid_matrix = data.matrix(valid_data[, -'sales'])
+valid_label = valid_data[, sales]
+
+rm(train_data)
+rm(valid_data)
+free()
+
+dtrain = xgb.DMatrix(data = train_matrix, label = train_label)
+dvalid = xgb.DMatrix(data = valid_matrix, label = valid_label)
+
+rm(train_matrix)
+rm(valid_matrix)
+free()
+
+params = list(
+    objective = 'reg:linear',
+    eval_metric = 'rmse',
+    eta = 0.075,
+    max_depth = 6,
+    gamma = 0,
+    subsample = 0.7,
+    colsample_bytree = 0.7
+)
+
+xgb_model = xgb.train(
+    params = params,
+    data = dtrain,
+    nrounds = 4000,
+    early_stopping_rounds = 10,
+    watchlist = list(train = dtrain, valid = dvalid),
+    verbose = 1
+)
+
+xgb.save(xgb_model, '/home/prometheus/workspace/kaggle/m5_forecasting/model/xgb_CA_240520.model')
+```
+
+```{r test}
+calendar_raw = fread('/home/prometheus/workspace/kaggle/m5_forecasting/input/calendar.csv')
+train_raw = fread('/home/prometheus/workspace/kaggle/m5_forecasting/input/sales_train_validation.csv')
+price_raw = fread('/home/prometheus/workspace/kaggle/m5_forecasting/input/sell_prices.csv')
+
+train_raw = train_raw[state_id == 'WI']
+train_raw[, paste0('d_', 1914:1969) := 0L] # test dates
+
+train_m = melt.data.table(train_raw, id.vars = c('id','item_id', 'dept_id', 'cat_id', 'store_id', 'state_id'), variable.name = 'd', value.name = 'sales')
+train_1 = calendar_raw[train_m, on=c('d')]
+train_2 = price_raw[train_1, on=c('store_id', 'item_id', 'wm_yr_wk')]
+
+rm(calendar_raw, train_raw, price_raw, train_m, train_1)
+free()
+
+data = copy(train_2)
+
+rm(train_2)
+free()
+
+data = data[order(store_id, item_id, date)]
+
+data[, date := as.IDate(date)]
+
+data[, sales := as.numeric(sales)]
+
+feature_engineering = function(data) {
+    
+    data = copy(data)
+    
+    data[, sell_price_ := replace(sell_price, is.na(sell_price), mean(sell_price, na.rm=TRUE)), .(store_id, item_id)]
+    
+    data[, weekend := ifelse(weekday %chin% c('Friday', 'Saturday', 'Sunday'), 1, 0)]
+    data[, season := dplyr::case_when(month %in% c(1,2,12) ~ 1,
+                                  month %in% c(3,4,5) ~ 2,
+                                  month %in% c(6,7,8) ~ 3,
+                                  month %in% c(9,10,11) ~ 4)]
+    
+    lapply(c(1,7,30,365), function(x) {
+        data[, paste0('lag_', x, '_sales') := shift(sales, x), .(item_id, store_id)]
+    })
+
+    lapply(c(7, 14, 30), function(x) {
+        data[, paste0('roll_mean_', x, '_sales') := frollmean(sales, x), .(item_id, store_id)]
+    })
+    
+    # data[, store_id_ := as.numeric(as.factor(store_id))]
+    # data[, item_id_ := as.numeric(as.factor(item_id))]
+    data[, year_ := as.numeric(as.factor(year))]
+    # data[, dept_id_ := as.numeric(as.factor(dept_id))]
+    # data[, cat_id_ := as.numeric(as.factor(cat_id))]
+    
+    features = c('store_id_', 'item_id_', 'dept_id_', 'cat_id_', 
+                 'date', 'year_', 'month', 'wday', 'weekend', 'season',
+                 'snap_CA', 'snap_TX', 'snap_WI', 
+                 'sales', 'sell_price_',
+                 'lag_1_sales', 'lag_7_sales', 'lag_30_sales', 'lag_365_sales',
+                 'roll_mean_7_sales', 'roll_mean_14_sales', 'roll_mean_30_sales')
+    
+    data = data[, ..features]
+    
+    return(data)
+}
+
+start_date = as.IDate('2016-04-25')
+
+xgb_model = xgb.load('/home/prometheus/workspace/kaggle/m5_forecasting/model/xgb_WI_240520.model')
+
+for (day in as.list(seq(from = start_date, length.out = 2 * 28, by = 'day'))) {
+    cat(as.character(day), ' ')
+    test_date = data[date >= day - 365 & date <= day]
+    test_date = feature_engineering(test_date)
+    test_date = data.matrix(test_date[date == day, -c('sales', 'date')])
+    data[date == day, sales := predict(xgb_model, test_date)]
+}
+
+```
+
+```{r plot predictions}
+data[, .(sales = sum(sales)), by = "date",][, ggplot(.SD, aes(x = date, y = sales, colour = (date < start_date))) +
+       geom_line() + 
+       geom_smooth(method='lm', formula= y~x, se = FALSE, linetype = 2, size = 0.3, color = "gray20") + 
+       labs(x = "", y = "total sales") +
+       theme_minimal() +
+       theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position="none") +
+       scale_x_date(labels=scales::date_format ("%b %d"), breaks=scales::date_breaks("14 day"))]
+```
+
+```{r submission}
+data[date >= start_date
+   ][date >= start_date+28, id := sub("validation", "evaluation", id)
+     ][, d := paste0("F", 1:28), by = id
+       ][, dcast(.SD, id ~ d, value.var = "sales")
+         ][, fwrite(.SD, "/home/prometheus/workspace/kaggle/m5_forecasting/output/xgb_WI_240520.csv")]
+```
+
+```{r combine the partitions}
+ca_pred = fread('/home/prometheus/workspace/kaggle/m5_forecasting/output/xgb_CA_240520.csv')
+tx_pred = fread('/home/prometheus/workspace/kaggle/m5_forecasting/output/xgb_TX_240520.csv')
+wi_pred = fread('/home/prometheus/workspace/kaggle/m5_forecasting/output/xgb_WI_240520.csv')
+
+submission = rbind(ca_pred, tx_pred, wi_pred)
+
+fwrite(submission, '/home/prometheus/workspace/kaggle/m5_forecasting/output/xgb_240520.csv')
+```
+
