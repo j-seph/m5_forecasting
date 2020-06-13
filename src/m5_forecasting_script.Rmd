@@ -14,9 +14,9 @@ library(xgboost)
 
 
 ```{r load data}
-calendar_raw = fread('/home/prometheus/workspace/kaggle/m5_forecasting/input/calendar.csv')
-train_raw = fread('/home/prometheus/workspace/kaggle/m5_forecasting/input/sales_train_validation.csv')
-price_raw = fread('/home/prometheus/workspace/kaggle/m5_forecasting/input/sell_prices.csv')
+calendar_raw = fread('src/input/calendar.csv')
+train_raw = fread('src/input/sales_train_validation.csv')
+price_raw = fread('src/input/sell_prices.csv')
 ```
 
 ```{r merge datasets}
@@ -270,5 +270,20 @@ wi_pred = fread('/home/prometheus/workspace/kaggle/m5_forecasting/output/xgb_WI_
 submission = rbind(ca_pred, tx_pred, wi_pred)
 
 fwrite(submission, '/home/prometheus/workspace/kaggle/m5_forecasting/output/xgb_240520.csv')
+```
+
+```{r prophet test}
+
+dt = data[store_id == 'CA_1' & item_id == 'FOODS_1_001', .(ds = date, y = sales)]
+
+dt[, ds := as.Date(ds)]
+
+m = prophet::prophet(dt)
+
+future = prophet::make_future_dataframe(m, periods = 56)
+
+forecast = predict(m, future)
+
+
 ```
 

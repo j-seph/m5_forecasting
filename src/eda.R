@@ -1,6 +1,5 @@
 library(data.table)
 library(ggplot2)
-library(ggridges)
 library(gridExtra)
 library(dygraphs)
 library(zoo)
@@ -96,6 +95,7 @@ sell_price_diff = train_m[, .(sp_min = min(sell_price, na.rm = T),
                                  ((max(sell_price, na.rm = T) + min(sell_price, na.rm = T)) / 2)) * 100,
                              sp_pct_chng = ((max(sell_price, na.rm = T) - min(sell_price, na.rm = T))/
                                  min(sell_price, na.rm = T)) * 100), by = .(store_id, item_id)]
-sell_price_diff[sp_pct_chng > 0.5]
-sell_price_diff[sp_pct_chng > 50][order(-sp_pct_chng)]
+
+sell_price_diff = sell_price_diff[order(-sp_pct_diff)]
+sell_price_diff[, rank := .I]
 
