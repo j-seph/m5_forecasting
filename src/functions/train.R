@@ -1,67 +1,56 @@
 
 train_model = function(data, config, na_omit = TRUE) {
+
+    idx = data[date <= max(date) - config$h, which = TRUE]
     
-    if (na_omit) {
-        idx = data[date <= max(date) - config$h, which = TRUE]
-        
-        labels = data$sales
-        
-        train_mat = data.matrix(data[idx, -c('id', 'date', 'sales', 'd', 'wm_yr_wk')])
-        
-        train_label = labels[idx]
-        
+    labels = data$sales
+    
+    features = names(data[, -c('id', 'date', 'sales', 'd', 'wm_yr_wk')])
+    
+    train_mat = data.matrix(data[idx, features, with = FALSE])
+    
+    train_label = labels[idx]
+    
+    valid_mat = data.matrix(data[-idx, features, with = FALSE])
+    
+    valid_label = labels[-idx]
+    
+    if (config[['model']] == 'xgb') {
         dtrain = xgb.DMatrix(data = train_mat, label = train_label)
-        
-        valid_mat = data.matrix(data[-idx, -c('id', 'date', 'sales', 'd', 'wm_yr_wk')])
-        
-        valid_label = labels[-idx]
-        
         dvalid = xgb.DMatrix(data = valid_mat, label = valid_label)
         
         rm(data, train_mat, valid_mat)
         
-    } else {
-        train = data[date <= config$train_end_date, config$features, with = FALSE]
+        xgb_model = models$xgboost$model(dtrain = dtrain, dtest = dvalid, params = models$xgboost$params)
         
-        train_mat = data.matrix(train[, -c('id', 'date', 'sales')])
+        if (!dir.exists(config$model_path)) dir.create(config$model_path)
+        xgb.save(xgb_model, config$saved_model)
         
-        train_label = train$sales
+    } else if (config[['model']] == 'lgb') {
+        dtrain = lgb.Dataset(data = train_mat, label = train_label, categorical_feature = config[['categorical_feats']])
+        dvalid = lgb.Dataset(data = valid_mat, label = valid_label, categorical_feature = config[['categorical_feats']])
         
-        dtrain = xgb.DMatrix(data = train_mat, label = train$sales)
+        rm(data, train_mat, valid_mat)
         
-        valid = data[date > config$train_end_date & date <= config$train_end_date + config$h, config$features, with = FALSE]
+        lgb_model = models$lightgbm$model(dtrain = dtrain, dtest = dvalid, params = models$lightgbm$params)
         
-        valid_mat = data.matrix(valid[, -c('id', 'date', 'sales')])
-        
-        valid_label = valid$sales
-        
-        dvalid = xgb.DMatrix(data = valid_mat, label = valid$sales)
-        
-        rm(data, train, train_mat, valid, valid_mat)
+        if (!dir.exists(config$model_path)) dir.create(config$model_path)
+        lgb.save(lgb_model, config$saved_model)
     }
-    
-    
-    
-    # cv_res = xgb.cv(params = models$xgboost$params,
-    #                 data = dtrain,
-    #                 nrounds = 1000,
-    #                 nfold = 5,
-    #                 showsd = TRUE,
-    #                 metrics = 'rmse',
-    #                 print_every_n = 10,
-    #                 early_stopping_rounds = 20)
-    
-    xgb_model = models$xgboost$model(dtrain = dtrain, dtest = dvalid, params = models$xgboost$params)
-    
-    dir.create(config$model_path)
-    xgb.save(xgb_model, config$saved_model)
 }
 
 
 
 
 
-
+# cv_res = xgb.cv(params = models$xgboost$params,
+#                 data = dtrain,
+#                 nrounds = 1000,
+#                 nfold = 5,
+#                 showsd = TRUE,
+#                 metrics = 'rmse',
+#                 print_every_n = 10,
+#                 early_stopping_rounds = 20)
 
 
 

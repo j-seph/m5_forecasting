@@ -1,9 +1,9 @@
-evaluate_metrics = function(data) {
+evaluate_metrics = function(data, config) {
     
     data = copy(data)
     
     data[, day_idnt := as.integer(gsub('d_', '', d))]
-    prediction = data[day_idnt >= 1914 & day_idnt <= 1941, .(d, item_id, store_id, sales)]
+    prediction = data[day_idnt >= config$tr_last + 1 & day_idnt <= config$tr_last + 28, .(d, item_id, store_id, sales)]
     prediction[, d := as.character(d)]
     prediction[, preds := sales]
     prediction[, sales := NULL]

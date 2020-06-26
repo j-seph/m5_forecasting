@@ -12,7 +12,7 @@ create_dt = function(is_train = TRUE, config) {
     } else {
         dt = fread(paste0(config$input_path, 'sales_train_validation.csv'),
                    drop = paste0('d_', 1:(config$tr_last - config$max_lags)))
-        dt[, paste0('d_', (config$tr_last+1):(config$tr_last+2*config$h)) := 0]
+        dt[, paste0('d_', (config$tr_last+1):(config$tr_last+config$h)) := 0]
     }
     
     dt = generate_model_code(dt)
@@ -34,6 +34,8 @@ create_dt = function(is_train = TRUE, config) {
     
     prices = fread(paste0(config$input_path, 'sell_prices.csv'))
     dt[prices, sell_price := i.sell_price, on = c('store_id', 'item_id', 'wm_yr_wk')]
+    
+    dt[, sales := as.numeric(sales)]
     
     return(dt)
 }
